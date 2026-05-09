@@ -10,7 +10,7 @@ import ExportButton from './ExportButton.jsx';
 import { decodeAudioFile } from '../utils/exportUtils.js';
 import { GENRE_TEMPLATES } from '../utils/genreTemplates.js';
 
-export default function Dashboard({ modelReady, onTranscribe, modelWorkerRef }) {
+export default function Dashboard({ modelReady, fallbackMode, onTranscribe, modelWorkerRef }) {
   // ─── State ───────────────────────────────────────────────────────────────
   const [audioFile, setAudioFile] = useState(null);
   const [audioData, setAudioData] = useState(null);
@@ -271,7 +271,14 @@ export default function Dashboard({ modelReady, onTranscribe, modelWorkerRef }) 
             ) : (
               <>
                 <span>🚀</span>
-                {canProcess ? 'Process Vocals' : !audioFile ? 'Upload audio first' : !genre ? 'Select a genre' : !modelReady ? 'Waiting for AI models…' : 'Process Vocals'}
+                {canProcess
+                  ? (fallbackMode ? 'Process Vocals (Fallback Mode)' : 'Process Vocals')
+                  : !audioFile ? 'Upload audio first'
+                  : !genre ? 'Select a genre'
+                  : !targetKey ? 'Select a key'
+                  : !modelReady ? 'Loading models…'
+                  : !analysisReady ? 'Analysing audio…'
+                  : 'Process Vocals'}
               </>
             )}
           </button>
