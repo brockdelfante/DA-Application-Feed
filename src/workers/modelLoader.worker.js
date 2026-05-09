@@ -6,9 +6,11 @@
 
 import { pipeline, env } from '@xenova/transformers';
 
-// Use ONNX CDN and allow remote models
+// Point ONNX runtime WASM to the CDN so the paths work in any deployment
+env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/';
 env.allowRemoteModels = true;
 env.useBrowserCache = true;
+env.allowLocalModels = false;
 
 // Cache pipelines in worker scope
 let transcriber = null;

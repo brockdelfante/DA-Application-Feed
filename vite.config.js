@@ -39,6 +39,14 @@ export default defineConfig({
               cacheName: 'ai-models-cache',
               expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 30 }
             }
+          },
+          {
+            urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'cdn-cache',
+              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30 }
+            }
           }
         ]
       }
@@ -48,8 +56,10 @@ export default defineConfig({
     format: 'es'
   },
   optimizeDeps: {
-    exclude: ['@xenova/transformers']
+    exclude: ['@xenova/transformers', 'onnxruntime-web']
   },
+  // Copy ONNX WASM files to dist so they're available as a local fallback
+  assetsInclude: ['**/*.wasm'],
   test: {
     globals: true,
     environment: 'jsdom',
