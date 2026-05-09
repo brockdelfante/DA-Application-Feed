@@ -1,6 +1,7 @@
 /**
  * Model Loader Web Worker
- * Downloads and caches Whisper-tiny and SmolLM via Transformers.js.
+ * - Whisper-tiny via Transformers.js for in-browser transcription
+ * - OpenRouter API for text-based structure analysis + coherence check
  * Reports progress back to the main thread.
  */
 
@@ -12,9 +13,7 @@ env.allowRemoteModels = true;
 env.useBrowserCache = true;
 env.allowLocalModels = false;
 
-// Cache pipelines in worker scope
 let transcriber = null;
-let structureAnalyser = null;
 // eslint-disable-next-line no-unused-vars
 let _isReady = false;
 
@@ -39,8 +38,11 @@ async function loadModels() {
   try {
     self.postMessage({ type: 'PROGRESS', stage: 'models', progress: 0, message: 'Starting model download…' });
 
+    // Check if OpenRouter is available (text tasks don't need local models)
+    const hasApiKey = !!(self.__VITE_OPENROUTER_API_KEY__ || '');
+
     // Load Whisper-tiny for transcription
-    self.postMessage({ type: 'PROGRESS', stage: 'whisper', progress: 5, message: 'Downloading Whisper-tiny…' });
+    self.postMessage({ type: 'PROGRESS', stage: 'whisper', progress: 5, message: 'Downloading Whisper-tiny (transcription)…' });
     transcriber = await pipeline(
       'automatic-speech-recognition',
       'Xenova/whisper-tiny',
@@ -48,39 +50,33 @@ async function loadModels() {
         progress_callback: (progressEvent) => {
           if (progressEvent.status === 'downloading') {
             const pct = progressEvent.total > 0
-              ? Math.round((progressEvent.loaded / progressEvent.total) * 45)
+              ? Math.round((progressEvent.loaded / progressEvent.total) * 90)
               : 0;
-            self.postMessage({ type: 'PROGRESS', stage: 'whisper', progress: 5 + pct, message: `Whisper-tiny: ${pct * 2}%` });
+            self.postMessage({
+              type: 'PROGRESS',
+              stage: 'whisper',
+              progress: 5 + pct,
+              message: `Whisper-tiny: ${pct}%`
+            });
           }
         }
       }
     );
 
-    self.postMessage({ type: 'PROGRESS', stage: 'whisper', progress: 50, message: 'Whisper-tiny ready.' });
-
-    // Load SmolLM for structural analysis
-    self.postMessage({ type: 'PROGRESS', stage: 'smollm', progress: 55, message: 'Downloading SmolLM…' });
-    structureAnalyser = await pipeline(
-      'text-generation',
-      'Xenova/smollm-135m-instruct',
-      {
-        progress_callback: (progressEvent) => {
-          if (progressEvent.status === 'downloading') {
-            const pct = progressEvent.total > 0
-              ? Math.round((progressEvent.loaded / progressEvent.total) * 40)
-              : 0;
-            self.postMessage({ type: 'PROGRESS', stage: 'smollm', progress: 55 + pct, message: `SmolLM: ${pct * 2}%` });
-          }
-        }
-      }
-    );
-
-    self.postMessage({ type: 'PROGRESS', stage: 'smollm', progress: 95, message: 'SmolLM ready.' });
     _isReady = true;
-    self.postMessage({ type: 'MODELS_READY', progress: 100 });
+    self.postMessage({
+      type: 'MODELS_READY',
+      progress: 100,
+      whisperReady: true,
+      apiMode: hasApiKey
+    });
 
   } catch (err) {
-    self.postMessage({ type: 'ERROR', message: `Model loading failed: ${err.message}`, stage: 'models' });
+    self.postMessage({
+      type: 'ERROR',
+      message: `Model loading failed: ${err.message}`,
+      stage: 'models'
+    });
   }
 }
 
@@ -93,7 +89,6 @@ async function transcribeAudio(audioData, sampleRate) {
   try {
     self.postMessage({ type: 'PROGRESS', stage: 'transcribe', progress: 0, message: 'Transcribing…' });
 
-    // Whisper expects Float32 at 16kHz — resample if needed
     let input = audioData;
     if (sampleRate !== 16000) {
       input = resampleTo16kHz(audioData, sampleRate);
@@ -113,37 +108,22 @@ async function transcribeAudio(audioData, sampleRate) {
 }
 
 async function analyseStructure(transcript, genre, bpm) {
-  if (!structureAnalyser) {
-    // Fallback: return a default section map based on transcript length
-    const fallback = buildFallbackSectionMap(transcript, genre, bpm);
-    self.postMessage({ type: 'STRUCTURE_COMPLETE', sectionMap: fallback });
-    return;
+  // Try OpenRouter first (much better quality)
+  const apiKey = self.__VITE_OPENROUTER_API_KEY__;
+  if (apiKey) {
+    try {
+      const sectionMap = await callOpenRouterStructure(transcript, genre, bpm, apiKey);
+      self.postMessage({ type: 'STRUCTURE_COMPLETE', sectionMap, source: 'openrouter' });
+      return;
+    } catch (err) {
+      // Fall through to heuristic
+      console.warn('OpenRouter structure analysis failed, using fallback:', err.message);
+    }
   }
 
-  try {
-    const { buildStructurePrompt } = await import('../utils/coherenceChecker.js');
-    const { parseSectionJSON } = await import('../utils/coherenceChecker.js');
-
-    const prompt = buildStructurePrompt(transcript, genre, bpm);
-    const output = await structureAnalyser(prompt, {
-      max_new_tokens: 200,
-      temperature: 0.1,
-      do_sample: false
-    });
-
-    const generatedText = output[0]?.generated_text ?? '';
-    // Extract JSON from the response
-    const jsonMatch = generatedText.match(/\{[^{}]+\}/);
-    if (!jsonMatch) throw new Error('No JSON in LLM response');
-
-    const sectionMap = parseSectionJSON(jsonMatch[0]);
-    self.postMessage({ type: 'STRUCTURE_COMPLETE', sectionMap });
-
-  } catch (err) {
-    // Fallback to heuristic analysis
-    const fallback = buildFallbackSectionMap(transcript, genre, bpm);
-    self.postMessage({ type: 'STRUCTURE_COMPLETE', sectionMap: fallback, usedFallback: true });
-  }
+  // Heuristic fallback
+  const fallback = buildFallbackSectionMap(transcript, genre, bpm);
+  self.postMessage({ type: 'STRUCTURE_COMPLETE', sectionMap: fallback, source: 'fallback' });
 }
 
 async function checkCoherence(reorderedTranscript, _genre) {
@@ -151,14 +131,59 @@ async function checkCoherence(reorderedTranscript, _genre) {
     const { checkLyricalCoherence } = await import('../utils/coherenceChecker.js');
     const result = checkLyricalCoherence(reorderedTranscript);
     self.postMessage({ type: 'COHERENCE_COMPLETE', result });
-  } catch (err) {
+  } catch {
     self.postMessage({ type: 'COHERENCE_COMPLETE', result: { coherent: true, score: 0.5, issues: [] } });
   }
 }
 
-/**
- * Resample Float32 audio from `sourceSampleRate` to 16000 Hz.
- */
+// ─── OpenRouter API call (runs inside worker — fetch is available) ─────────
+
+async function callOpenRouterStructure(transcript, genre, bpm, apiKey) {
+  const prompt = `You are a music producer analysing a vocal performance for ${genre} at ${bpm} BPM.
+
+Given this transcript with word timestamps:
+${transcript}
+
+Identify the song sections (intro, verse, pre-chorus, chorus, bridge, outro, drop, breakdown).
+Return ONLY a JSON object mapping time ranges to section names. Example:
+{"0s-8s":"intro","8s-24s":"verse","24s-32s":"chorus"}
+
+Rules:
+- Cover the full duration with no gaps and no overlaps
+- Use only: intro, verse, pre-chorus, chorus, bridge, outro, drop, breakdown
+- Output valid JSON only — no explanation, no markdown`;
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://brockdelfante.github.io/Vocal-Aligner/',
+      'X-Title': 'Vocal Restructurer'
+    },
+    body: JSON.stringify({
+      model: 'openai/gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 300,
+      temperature: 0.1
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenRouter ${response.status}: ${await response.text()}`);
+  }
+
+  const data = await response.json();
+  const raw = data.choices?.[0]?.message?.content ?? '';
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON in OpenRouter response');
+
+  const { parseSectionJSON } = await import('../utils/coherenceChecker.js');
+  return parseSectionJSON(match[0]);
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 function resampleTo16kHz(audioData, sourceSampleRate) {
   if (sourceSampleRate === 16000) return audioData;
   const ratio = sourceSampleRate / 16000;
@@ -174,15 +199,11 @@ function resampleTo16kHz(audioData, sourceSampleRate) {
   return output;
 }
 
-/**
- * Fallback heuristic: divide audio into sections based on duration and genre template.
- */
 function buildFallbackSectionMap(transcript, genre, _bpm) {
-  // Extract duration hint from transcript timestamps if available
   const timeMatches = [...transcript.matchAll(/\[(\d+\.?\d*)s\]/g)];
   const lastTime = timeMatches.length > 0
     ? parseFloat(timeMatches[timeMatches.length - 1][1])
-    : 120; // default 2 min
+    : 120;
 
   const sectionNames = {
     'EDM': ['intro', 'verse', 'pre-chorus', 'chorus', 'drop', 'bridge', 'outro'],
