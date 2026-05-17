@@ -15,7 +15,7 @@ const ListingCard = ({ listing }) => {
           {listing['Date Sourced']}
         </div>
         <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">
-          {listing.Authority} <span className="mx-2 text-gray-300">|</span> {listing.State}
+          {listing.Authority} <span className="mx-2 text-gray-300">|</span> {listing.Reference} <span className="mx-2 text-gray-300">|</span> {listing.State}
         </div>
         <button
           onClick={openDetails}

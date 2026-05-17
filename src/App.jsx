@@ -1,19 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { fetchSheetData } from './utils/dataService';
+import { parseDateSourced } from './utils/dateParser';
 import ListingCard from './components/ListingCard';
 import Filters from './components/Filters';
-
-const parseDateSourced = (dateStr) => {
-  if (!dateStr) return new Date(0);
-  // Expected format: DD/MM/YYYY HH:mm
-  const [datePart, timePart] = dateStr.split(' ');
-  const [day, month, year] = datePart.split('/').map(Number);
-  if (timePart) {
-    const [hours, minutes] = timePart.split(':').map(Number);
-    return new Date(year, month - 1, day, hours, minutes);
-  }
-  return new Date(year, month - 1, day);
-};
 
 function App() {
   const [listings, setListings] = useState([]);
@@ -73,7 +62,10 @@ function App() {
       // Date from filter
       if (dateFrom) {
         const itemDate = parseDateSourced(item['Date Sourced']);
-        const filterDate = new Date(dateFrom);
+        // dateFrom is YYYY-MM-DD from the input[type=date]
+        // Create filterDate at start of day in local time to avoid timezone shifts
+        const [y, m, d] = dateFrom.split('-').map(Number);
+        const filterDate = new Date(y, m - 1, d);
         if (itemDate < filterDate) return false;
       }
 
