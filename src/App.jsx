@@ -1,93 +1,138 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import Dashboard from './components/Dashboard.jsx';
-import ModelDownloadProgress from './components/ModelDownloadProgress.jsx';
+import React, { useState, useEffect, useMemo } from 'react';
+import { fetchSheetData } from './utils/dataService';
+import ListingCard from './components/ListingCard';
+import Filters from './components/Filters';
 
-export default function App() {
-  const [modelStatus, setModelStatus] = useState({
-    loading: false,
-    ready: false,
-    fallback: false,
-    progress: 0,
-    message: 'Connecting to model hub…'
-  });
+const parseDateSourced = (dateStr) => {
+  if (!dateStr) return new Date(0);
+  // Expected format: DD/MM/YYYY HH:mm
+  const [datePart, timePart] = dateStr.split(' ');
+  const [day, month, year] = datePart.split('/').map(Number);
+  if (timePart) {
+    const [hours, minutes] = timePart.split(':').map(Number);
+    return new Date(year, month - 1, day, hours, minutes);
+  }
+  return new Date(year, month - 1, day);
+};
 
-  const modelWorkerRef = useRef(null);
+function App() {
+  const [listings, setListings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Filter states
+  const [dateFrom, setDateFrom] = useState('');
+  const [selectedCategories, setSelectedCategories] = useState([]);
+  const [selectedAuthorities, setSelectedAuthorities] = useState([]);
+  const [selectedStates, setSelectedStates] = useState([]);
 
   useEffect(() => {
-    let worker;
-    try {
-      worker = new Worker(
-        new URL('./workers/modelLoader.worker.js', import.meta.url),
-        { type: 'module' }
-      );
-    } catch (err) {
-      // Worker failed to start — enable fallback mode immediately
-      setModelStatus({ loading: false, ready: true, fallback: true, progress: 100, message: 'Running in fallback mode (no AI transcription)' });
-      return;
-    }
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        const data = await fetchSheetData();
 
-    worker.onmessage = (event) => {
-      const { type, progress, message } = event.data;
-      if (type === 'PROGRESS') {
-        setModelStatus(prev => ({ ...prev, loading: true, progress: progress ?? prev.progress, message: message ?? prev.message }));
-      } else if (type === 'MODELS_READY') {
-        setModelStatus({ loading: false, ready: true, fallback: false, progress: 100, message: 'AI models ready' });
-      } else if (type === 'ERROR') {
-        // Model load failed — switch to fallback mode so the user can still process audio
-        setModelStatus({ loading: false, ready: true, fallback: true, progress: 100, message: `Fallback mode — AI unavailable: ${event.data.message}` });
+        // Default sort by Date Sourced descending
+        const sortedData = data.sort((a, b) => {
+          return parseDateSourced(b['Date Sourced']) - parseDateSourced(a['Date Sourced']);
+        });
+
+        setListings(sortedData);
+        setError(null);
+      } catch (err) {
+        setError('Failed to load data. Please check the spreadsheet access.');
+        console.error(err);
+      } finally {
+        setLoading(false);
       }
     };
 
-    worker.onerror = (err) => {
-      setModelStatus({ loading: false, ready: true, fallback: true, progress: 100, message: `Fallback mode (worker error: ${err.message ?? 'unknown'})` });
-    };
-
-    modelWorkerRef.current = worker;
-
-    worker.postMessage({ type: 'LOAD_MODELS' });
-    setModelStatus(prev => ({ ...prev, loading: true, progress: 0, message: 'Connecting to model hub…' }));
-
-    // Timeout: if models take longer than 3 min, switch to fallback
-    const timeout = setTimeout(() => {
-      setModelStatus(prev => {
-        if (!prev.ready) {
-          return { loading: false, ready: true, fallback: true, progress: 100, message: 'Fallback mode (model download timed out)' };
-        }
-        return prev;
-      });
-    }, 180000);
-
-    return () => {
-      clearTimeout(timeout);
-      worker.terminate();
-    };
+    loadData();
   }, []);
 
-  const handleTranscribe = useCallback((audioData, sampleRate, onResult) => {
-    if (!modelWorkerRef.current || modelStatus.fallback) {
-      // Fallback: return empty transcription result
-      onResult({ chunks: [] });
-      return;
-    }
-    modelWorkerRef.current.onmessage = (event) => {
-      if (event.data.type === 'TRANSCRIPTION_COMPLETE') {
-        onResult(event.data.result);
-      } else if (event.data.type === 'ERROR') {
-        onResult({ chunks: [] });
-      }
+  const filterOptions = useMemo(() => {
+    const categories = new Set();
+    const authorities = new Set();
+    const states = new Set();
+
+    listings.forEach(item => {
+      if (item.Category) categories.add(item.Category);
+      if (item.Authority) authorities.add(item.Authority);
+      if (item.State) states.add(item.State);
+    });
+
+    return {
+      categories: Array.from(categories).sort(),
+      authorities: Array.from(authorities).sort(),
+      states: Array.from(states).sort()
     };
-    modelWorkerRef.current.postMessage({ type: 'TRANSCRIBE', audioData, sampleRate });
-  }, [modelStatus.fallback]);
+  }, [listings]);
+
+  const filteredListings = useMemo(() => {
+    return listings.filter(item => {
+      // Date from filter
+      if (dateFrom) {
+        const itemDate = parseDateSourced(item['Date Sourced']);
+        const filterDate = new Date(dateFrom);
+        if (itemDate < filterDate) return false;
+      }
+
+      // Multi-select Category
+      if (selectedCategories.length > 0 && !selectedCategories.includes(item.Category)) {
+        return false;
+      }
+
+      // Multi-select Authority
+      if (selectedAuthorities.length > 0 && !selectedAuthorities.includes(item.Authority)) {
+        return false;
+      }
+
+      // Multi-select State
+      if (selectedStates.length > 0 && !selectedStates.includes(item.State)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [listings, dateFrom, selectedCategories, selectedAuthorities, selectedStates]);
+
+  if (loading) return <div className="flex justify-center items-center h-screen">Loading listings...</div>;
+  if (error) return <div className="text-red-500 text-center p-10">{error}</div>;
 
   return (
-    <div className="min-h-screen bg-dark-900 text-white">
-      <ModelDownloadProgress status={modelStatus} />
-      <Dashboard
-        modelReady={modelStatus.ready}
-        fallbackMode={modelStatus.fallback}
-        onTranscribe={handleTranscribe}
-        modelWorkerRef={modelWorkerRef}
-      />
+    <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-4xl mx-auto">
+        <h1 className="text-3xl font-bold text-gray-900 mb-8 text-center">Listings Feed</h1>
+
+        <Filters
+          options={filterOptions}
+          dateFrom={dateFrom}
+          setDateFrom={setDateFrom}
+          selectedCategories={selectedCategories}
+          setSelectedCategories={setSelectedCategories}
+          selectedAuthorities={selectedAuthorities}
+          setSelectedAuthorities={setSelectedAuthorities}
+          selectedStates={selectedStates}
+          setSelectedStates={setSelectedStates}
+        />
+
+        <div className="mt-8 space-y-4">
+          <div className="text-sm text-gray-600 mb-4">
+            Showing {filteredListings.length} of {listings.length} listings
+          </div>
+          {filteredListings.length > 0 ? (
+            filteredListings.map((listing, index) => (
+              <ListingCard key={listing.ID || index} listing={listing} />
+            ))
+          ) : (
+            <div className="text-center py-20 bg-white rounded-lg shadow">
+              <p className="text-gray-500">No listings match your filters.</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
+
+export default App;

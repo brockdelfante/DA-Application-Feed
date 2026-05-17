@@ -1,0 +1,11 @@
+
+> vocal-restructurer@1.0.0 dev
+> vite
+
+
+  VITE v5.4.21  ready in 342 ms
+
+  ➜  Local:   http://localhost:5173/Vocal-Aligner/
+  ➜  Network: use --host to expose
+10:39:37 AM [vite] hmr update /src/components/Filters.jsx, /src/index.css
+10:43:51 AM [vite] hmr update /src/components/Filters.jsx, /src/index.css
