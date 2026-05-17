@@ -1,4 +1,4 @@
-# Vocal Aligner
+# DA Application Feed
 
 A listings feed application that fetches and displays data from a Google Sheet.
 
