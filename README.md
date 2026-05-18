@@ -1,4 +1,4 @@
-# Vocal Aligner
+# DA Application Feed
 
 A listings feed application that fetches and displays data from a Google Sheet.
 
@@ -20,7 +20,7 @@ A listings feed application that fetches and displays data from a Google Sheet.
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/brockdelfante/Vocal-Aligner.git
+   git clone https://github.com/brockdelfante/DA-Application-Feed.git
    ```
 2. Install dependencies:
    ```bash
@@ -46,7 +46,7 @@ npm run build
 This application is configured to deploy automatically to GitHub Pages via GitHub Actions whenever changes are merged into the `main` branch.
 
 ### GitHub Pages URL
-The app will be available at: `https://brockdelfante.github.io/Vocal-Aligner/`
+The app will be available at: `https://brockdelfante.github.io/DA-Application-Feed/`
 
 ### Configuration
 The deployment workflow requires a `VITE_OPENROUTER_API_KEY` secret to be configured in your GitHub repository settings under **Settings > Secrets and variables > Actions**.
