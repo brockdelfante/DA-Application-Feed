@@ -50,3 +50,6 @@ The app will be available at: `https://brockdelfante.github.io/DA-Application-Fe
 
 ### Configuration
 The deployment workflow requires a `VITE_OPENROUTER_API_KEY` secret to be configured in your GitHub repository settings under **Settings > Secrets and variables > Actions**.
+## Deployment
+
+This application is configured to deploy automatically to GitHub Pages via GitHub Actions whenever changes are pushed to the `main` branch.
