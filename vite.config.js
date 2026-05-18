@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const apiKey = env.VITE_OPENROUTER_API_KEY ?? '';
 
   return {
-    base: '/Vocal-Aligner/',
+    base: '/DA-Application-Feed/',
     // Inject the API key as a global so Web Workers can access it
     // (workers cannot read import.meta.env directly)
     define: {
